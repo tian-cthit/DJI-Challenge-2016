@@ -1,0 +1,36 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/include/adrc.h
+stdio.h
+-
+stdlib.h
+-
+tmwtypes.h
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/include/tmwtypes.h
+simstruc_types.h
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/include/simstruc_types.h
+
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/include/pid_set.h
+stdio.h
+-
+stdlib.h
+-
+
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/src/ADRC.cpp
+adrc.h
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/src/adrc.h
+math.h
+-
+sys/time.h
+-
+
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/src/pid_set.cpp
+pid_set.h
+/home/tx/catkin_ws/src/Onboard-SDK-6.2  obstacle/dji_sdk_demo/src/pid_set.h
+

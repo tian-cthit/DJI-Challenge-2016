@@ -1,0 +1,466 @@
+
+using namespace std;
+float a=320;
+float b=180;
+int n_boards=10;
+const int board_dt=20;
+int board_w=11;
+int board_h=8;
+
+#include "ros/ros.h"
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <stdio.h>
+#include <malloc.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <poll.h>
+#include <signal.h>
+#include <assert.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include "cv.h"
+#include "highgui.h"
+#include "djicam.h" 
+#include <stdlib.h>
+#include <assert.h>
+#include <math.h>
+#include <float.h>
+#include <limits.h>
+#include <time.h>
+#include <ctype.h>
+#include <dji_sdk/dji_drone.h>
+#include <geometry_msgs/Twist.h>
+//#include <cstdlib>
+//#include <actionlib/client/simple_action_client.h>
+//#include <actionlib/client/terminal_state.h>
+// int calibrate();
+ros::Publisher Ford_pub;   //publish Ford150 message
+typedef unsigned char   BYTE;
+#define IMAGE_W 1280
+#define IMAGE_H 720
+#define FRAME_SIZE              IMAGE_W*IMAGE_H*3
+
+
+unsigned char buffer[FRAME_SIZE] = {0};
+unsigned int frame_size = 0;
+unsigned int nframe = 0;
+FILE *fp;
+
+
+#define mode GETBUFFER_MODE
+
+
+struct sRGB{
+	int r;
+	int g;
+	int b;
+};
+
+sRGB yuvTorgb(int Y, int U, int V)
+{
+	sRGB rgb;
+	rgb.r = (int)(Y + 1.4075 * (V-128));
+	rgb.g = (int)(Y - 0.3455 * (U-128) - 0.7169*(V-128));
+	rgb.b = (int)(Y + 1.779 * (U-128));
+	rgb.r =(rgb.r<0? 0: rgb.r>255? 255 : rgb.r);
+	rgb.g =(rgb.g<0? 0: rgb.g>255? 255 : rgb.g);
+	rgb.b =(rgb.b<0? 0: rgb.b>255? 255 : rgb.b);
+	return rgb;
+}
+unsigned char * NV12ToRGB(unsigned char * src, unsigned char * rgb, int width, int height){
+	int numOfPixel = width * height;
+	int positionOfU = numOfPixel;
+	int startY,step,startU,Y,U,V,index,nTmp;
+	sRGB tmp;
+
+	for(int i=0; i<height; i++){
+		startY = i*width;
+		step = i/2*width;
+		startU = positionOfU + step;
+		for(int j = 0; j < width; j++){
+			Y = startY + j;
+			if(j%2 == 0)
+				nTmp = j;
+			else
+				nTmp = j - 1;
+			U = startU + nTmp;
+			V = U + 1;
+			index = Y*3;
+			tmp = yuvTorgb((int)src[Y], (int)src[U], (int)src[V]);
+			rgb[index+0] = (char)tmp.b;
+			rgb[index+1] = (char)tmp.g;
+			rgb[index+2] = (char)tmp.r;
+		}
+	}
+	return rgb;
+}
+bool YUV420_To_BGR24(unsigned char *puc_y, unsigned char *puc_u, unsigned char *puc_v, unsigned char *puc_rgb, int width_y, int height_y)
+{
+	if (!puc_y || !puc_u || !puc_v || !puc_rgb)
+	{
+		return false;
+	}
+	int baseSize = width_y * height_y;
+	int rgbSize = baseSize * 3;
+
+	BYTE* rgbData = new BYTE[rgbSize];
+	memset(rgbData, 0, rgbSize);
+
+	int temp = 0;
+
+	BYTE* rData = rgbData; 
+	BYTE* gData = rgbData + baseSize;
+	BYTE* bData = gData + baseSize;
+
+	int uvIndex =0, yIndex =0;
+
+
+	for(int y=0; y < height_y; y++)
+	{
+		for(int x=0; x < width_y; x++)
+		{
+			uvIndex = (y>>1) * (width_y>>1) + (x>>1);
+			yIndex = y * width_y + x;
+
+			temp = (int)(puc_y[yIndex] + (puc_v[uvIndex] - 128) * 1.4022);
+			rData[yIndex] = temp<0 ? 0 : (temp > 255 ? 255 : temp);
+
+			temp = (int)(puc_y[yIndex] + (puc_u[uvIndex] - 128) * (-0.3456) +
+					(puc_v[uvIndex] - 128) * (-0.7145));
+			gData[yIndex] = temp < 0 ? 0 : (temp > 255 ? 255 : temp);
+
+			temp = (int)(puc_y[yIndex] + (puc_u[uvIndex] - 128) * 1.771);
+			bData[yIndex] = temp < 0 ? 0 : (temp > 255 ? 255 : temp);
+		}
+	}
+
+	int widthStep = width_y*3;
+	for (int y = 0; y < height_y; y++)
+	{
+		for (int x = 0; x < width_y; x++)
+		{
+			puc_rgb[y * widthStep + x * 3 + 2] = rData[y * width_y + x]; //R
+			puc_rgb[y * widthStep + x * 3 + 1] = gData[y * width_y + x]; //G
+			puc_rgb[y * widthStep + x * 3 + 0] = bData[y * width_y + x]; //B
+		}
+	}
+
+	if (!puc_rgb)
+	{
+		return false;
+	}
+	delete [] rgbData;
+	return true;
+}
+
+IplImage* YUV420_To_IplImage(unsigned char* pYUV420, int width, int height)
+{
+	if (!pYUV420)
+	{
+		return NULL;
+	}
+
+	int baseSize = width*height;
+	int imgSize = baseSize*3;
+	BYTE* pRGB24 = new BYTE[imgSize];
+	memset(pRGB24, 0, imgSize);
+
+	int temp = 0;
+
+	BYTE* yData = pYUV420; 
+	BYTE* uData = pYUV420 + baseSize; 
+	BYTE* vData = uData + (baseSize>>2); 
+
+	if(YUV420_To_BGR24(yData, uData, vData, pRGB24, width, height) == false || !pRGB24)
+	{
+		return NULL;
+	}
+
+	IplImage *image = cvCreateImage(cvSize(width, height), 8,3);
+	memcpy(image->imageData, pRGB24, imgSize);
+
+	if (!image)
+	{
+		return NULL;
+	}
+
+	delete [] pRGB24;
+	return image;
+}
+
+
+int calibrate()
+{
+             int argc;
+             char **argv;
+             int n_boards=10;
+             const int board_dt=1;
+             int board_w=9;
+       int board_h=6;
+
+	int board_n=board_w*board_h;
+	CvSize board_sz=cvSize(board_w,board_h);
+	cvNamedWindow("Calibration");
+	CvMat* image_points=cvCreateMat(n_boards*board_n,2,CV_32FC1);
+	CvMat* object_points=cvCreateMat(n_boards*board_n,3,CV_32FC1);
+	CvMat* point_counts=cvCreateMat(n_boards,1,CV_32SC1);
+	CvMat* intrinsic_matrix=cvCreateMat(3,3,CV_32FC1);
+	CvMat* distortion_coeffs=cvCreateMat(5,1,CV_32FC1);
+
+	CvPoint2D32f* corners=new CvPoint2D32f[board_n];
+	int corner_count;
+	int successes=0;
+	int step,frame=0;
+	char c;
+	//IplImage* gray_image=cvCreateImage(cvGetSize(image),8,1);
+	    // Demo demo;
+
+  // process command line options
+      //  demo.parseOptions(argc, argv);
+          // demo.setup();
+	ros::init(argc,argv,"image_raw");
+        ros::NodeHandle nh;
+              DJIDrone* drone = new DJIDrone(nh);
+              drone->request_sdk_permission_control();//obtain control
+	int ret,nKey;
+	int nState = 1;
+	int nCount = 1;
+	int gray_or_rgb = 0;
+
+	IplImage *pRawImg;
+	IplImage *pImg;
+	unsigned char *pData;
+	ros::NodeHandle nh_private("~");
+      nh_private.param("gray_or_rgb", gray_or_rgb, 0);
+
+	printf("gray_or_rgb==%d\n",gray_or_rgb);
+	if(gray_or_rgb){
+		pRawImg = cvCreateImage(cvSize(IMAGE_W, IMAGE_H),IPL_DEPTH_8U,3);
+		pImg = cvCreateImage(cvSize(640, 360),IPL_DEPTH_8U,3);
+		pData  = new unsigned char[1280 * 720 * 3];
+	} else{
+		pRawImg = cvCreateImage(cvSize(IMAGE_W, IMAGE_H),IPL_DEPTH_8U,1);
+		pImg = cvCreateImage(cvSize(640, 360),IPL_DEPTH_8U,1);
+	}
+        
+	 ros::NodeHandle nh_Ford;
+	 Ford_pub=nh_Ford.advertise<geometry_msgs::Twist>("Ford150/info",1);//Ford150
+	 geometry_msgs::Twist Ford_info;
+	  // Ford_info.header.frame_id="/ground";
+	    Ford_info.linear.x=0;
+	    Ford_pub.publish(Ford_info);
+	  
+	  
+        ros::NodeHandle node;
+	image_transport::ImageTransport transport(node);
+	image_transport::Publisher image_pub = transport.advertise("dji_sdk/image_raw", 1);
+	ros::Publisher caminfo_pub = node.advertise<sensor_msgs::CameraInfo>("dji_sdk/camera_info",1);
+	
+	ros::Time time=ros::Time::now();
+
+	cv_bridge::CvImage cvi;
+
+
+	sensor_msgs::Image im;
+	sensor_msgs::CameraInfo cam_info;
+
+	cam_info.header.frame_id = "/camera";
+	cam_info.height = IMAGE_H/2;
+	cam_info.width = IMAGE_W/2;
+	cam_info.distortion_model = "";
+	cam_info.D.push_back(-0.1297646493949856);
+	cam_info.D.push_back(0.0946885697670611);
+	cam_info.D.push_back(-0.0002935002712265514);
+	cam_info.D.push_back(-0.00022663675362156343);
+	cam_info.D.push_back(0.0);
+	cam_info.K = {388.40923066779754, 0.0, 318.06257844065226, 0.0, 518.1538449374815, 241.17339016626644, 0.0, 0.0, 1.0};
+	cam_info.R = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+	cam_info.P = {373.5429992675781, 0.0, 317.51131336952494, 0.0, 0.0, 504.4360656738281, 180.6131009245937, 0.0, 0.0, 0.0, 1.0, 0.0};
+	cam_info.binning_x = 0;
+	cam_info.binning_x = 0;
+
+	cam_info.roi.x_offset = 0;
+	cam_info.roi.y_offset = 0;
+	cam_info.roi.height = 0;
+	cam_info.roi.width = 0;
+	cam_info.roi.do_rectify = false;
+
+	ret = manifold_cam_init(mode);
+	if(ret == -1)
+	{
+		printf("manifold init error \n");
+		return -1;
+	}
+   
+
+	while(successes<n_boards&&ros::ok())
+	{
+		//image=cvQueryFrame(capture);
+		
+				ret = manifold_cam_read(buffer, &nframe, 1);
+		if(ret != -1)
+		{
+
+
+			if(gray_or_rgb){
+				NV12ToRGB(buffer,pData,1280,720);
+				memcpy(pRawImg->imageData,pData,FRAME_SIZE);
+			}else{
+				memcpy(pRawImg->imageData,buffer,FRAME_SIZE/3);
+			}
+			cvResize(pRawImg,pImg,CV_INTER_LINEAR);
+
+			time=ros::Time::now();
+			cvi.header.stamp = time;
+			cvi.header.frame_id = "image";
+
+			if(gray_or_rgb){
+				cvi.encoding = "bgr8";
+			}else{
+				cvi.encoding = "mono8";
+			}
+			cvi.image = pImg;
+			cvi.toImageMsg(im);
+			cam_info.header.seq = nCount;
+			cam_info.header.stamp = time;
+			caminfo_pub.publish(cam_info);
+			image_pub.publish(im);
+             
+             cv::Mat img;
+              img=cv::Mat(pImg); 
+
+           // demo.processImage(img);
+			ros::spinOnce();
+			nCount++;                 
+   
+           drone->gimbal_speed_control(0,5*(360-b),-5*(640-a));       
+           printf("speed yaw=%f, speed_pitch=%f\n",-(640-a),(360-b));
+           cvWaitKey(10);
+		}
+		else 
+			break;
+
+		if(frame++%board_dt==0)
+		{
+			int found=cvFindChessboardCorners(pRawImg,board_sz,corners,&corner_count,CV_CALIB_CB_ADAPTIVE_THRESH|CV_CALIB_CB_FILTER_QUADS);
+
+			//cvCvtColor(image,gray_image,CV_BGR2GRAY);
+			cvFindCornerSubPix(pRawImg,corners,corner_count,cvSize(11,11),cvSize(-1,-1),cvTermCriteria(CV_TERMCRIT_EPS+CV_TERMCRIT_ITER,30,0.1));
+			printf("corner_count=%d/n",corner_count);
+			cvDrawChessboardCorners(pRawImg,board_sz,corners,corner_count,found);
+			
+			printf("Num of images collected = %d\n",successes);
+
+			cvShowImage("Calibration",pRawImg);
+
+			c = cvWaitKey(0);
+			if(c!='p'){
+				continue;
+			}
+
+			if(corner_count==board_n)
+			{
+				step=successes*board_n;
+				for(int i=step,j=0;j<board_n;i++,j++)
+				{
+					CV_MAT_ELEM(*image_points,float,i,0)=corners[j].x;
+					CV_MAT_ELEM(*image_points,float,i,1)=corners[j].y;
+					CV_MAT_ELEM(*object_points,float,i,0)=j/board_w;
+					CV_MAT_ELEM(*object_points,float,i,1)=j%board_w;
+					CV_MAT_ELEM(*object_points,float,i,2)=0.0f;
+				}
+				CV_MAT_ELEM(*point_counts,int,successes,0)=board_n;
+				successes++;
+			}
+		}
+
+		if(c=='q'){
+			cvReleaseMat(&intrinsic_matrix);
+			cvReleaseMat(&distortion_coeffs);
+
+			cvReleaseMat(&object_points);
+			cvReleaseMat(&image_points);
+			cvReleaseMat(&point_counts);
+
+			delete[] corners;
+
+			//cvReleaseImage(&gray_image);
+
+			cvDestroyAllWindows();
+
+			return -1;
+		}
+	}
+
+	CvMat* object_points2=cvCreateMat(successes*board_n,3,CV_32FC1);
+	CvMat* image_points2=cvCreateMat(successes*board_n,2,CV_32FC1);
+	CvMat* point_counts2=cvCreateMat(successes,1,CV_32SC1);
+
+	for(int i=0;i<successes*board_n;i++)
+	{
+		CV_MAT_ELEM(*image_points2,float,i,0)=CV_MAT_ELEM(*image_points,float,i,0);
+		CV_MAT_ELEM(*image_points2,float,i,1)=CV_MAT_ELEM(*image_points,float,i,1);
+		CV_MAT_ELEM(*object_points2,float,i,0)=CV_MAT_ELEM(*object_points,float,i,0);
+		CV_MAT_ELEM(*object_points2,float,i,1)=CV_MAT_ELEM(*object_points,float,i,1);
+		CV_MAT_ELEM(*object_points2,float,i,2)=CV_MAT_ELEM(*object_points,float,i,2);
+
+	}
+
+	for(int i=0;i<successes;i++)
+	{
+		CV_MAT_ELEM(*point_counts2,int,i,0)=CV_MAT_ELEM(*point_counts,int,i,0);
+
+	}
+	cvReleaseMat(&object_points);
+	cvReleaseMat(&image_points);
+	cvReleaseMat(&point_counts);
+
+	CvMat* cam_rotation_all = cvCreateMat( successes, 3, CV_32FC1);
+	CvMat* cam_translation_vector_all = cvCreateMat( successes,3, CV_32FC1);
+	cvCalibrateCamera2(object_points2,image_points2,point_counts2,cvGetSize(pRawImg),intrinsic_matrix,distortion_coeffs,NULL,NULL,0);
+	
+	cvSave("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_manifold_read_cam_apriltag/calibration/Intrinsics.xml",intrinsic_matrix);
+	cvSave("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_manifold_read_cam_apriltag/calibration/Distortion.xml",distortion_coeffs);
+	cvSave("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_manifold_read_cam_apriltag/calibration/cam_rotation_all.xml",cam_rotation_all);
+	cvSave("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_manifold_read_cam_apriltag/calibration/cam_translation_vector_all.xml",cam_translation_vector_all);
+	
+	cvReleaseMat(&intrinsic_matrix);
+	cvReleaseMat(&distortion_coeffs);
+
+	cvReleaseMat(&object_points2);
+	cvReleaseMat(&image_points2);
+	cvReleaseMat(&point_counts2);
+
+	cvReleaseMat(&cam_rotation_all);
+	cvReleaseMat(&cam_translation_vector_all);
+
+	delete[] corners;
+
+
+
+	//cvReleaseImage(&gray_image);
+
+	cvDestroyAllWindows();
+   while(!manifold_cam_exit())
+	{
+		sleep(1);
+	}
+
+	fclose(fp);
+	sleep(1);
+	return 0;
+}
+
+
+int main()
+{
+	 int m=calibrate();
+	 return 0;
+}
+

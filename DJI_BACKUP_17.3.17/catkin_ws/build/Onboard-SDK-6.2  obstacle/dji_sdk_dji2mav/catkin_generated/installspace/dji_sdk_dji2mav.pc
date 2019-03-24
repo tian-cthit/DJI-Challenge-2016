@@ -1,0 +1,8 @@
+prefix=/home/tx/catkin_ws/install
+
+Name: dji_sdk_dji2mav
+Description: Description of dji_sdk_dji2mav
+Version: 0.1.0
+Cflags: -I/home/tx/catkin_ws/install/include
+Libs: -L/home/tx/catkin_ws/install/lib -ldji_sdk_dji2mav
+Requires: dji_sdk geometry_msgs roscpp rospy std_msgs

@@ -1,0 +1,7 @@
+set(_CATKIN_CURRENT_PACKAGE "dji_sdk")
+set(dji_sdk_MAINTAINER "Norman Li <norman.li@dji.com>, Botao Hu <me@botao.hu>")
+set(dji_sdk_DEPRECATED "")
+set(dji_sdk_VERSION "0.1.3")
+set(dji_sdk_BUILD_DEPENDS "geometry_msgs" "message_generation" "nav_msgs" "roscpp" "rospy" "std_msgs" "actionlib" "actionlib_msgs" "dji_sdk_lib")
+set(dji_sdk_RUN_DEPENDS "message_runtime" "actionlib" "actionlib_msgs" "geometry_msgs" "nav_msgs" "roscpp" "rospy" "std_msgs" "dji_sdk_lib")
+set(dji_sdk_BUILDTOOL_DEPENDS "catkin")

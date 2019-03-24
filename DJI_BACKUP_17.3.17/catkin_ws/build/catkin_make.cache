@@ -1,0 +1,2 @@
+Guidance-SDK-Rotation0419:Onboard-SDK-6.2  obstacle/dji_sdk:Onboard-SDK-6.2  obstacle/dji_sdk_demo:Onboard-SDK-6.2  obstacle/dji_sdk_dji2mav:Onboard-SDK-6.2  obstacle/dji_sdk_lib:my_pcl_tutorial:octomap_mapping-indigo-devel/octomap_mapping:octomap_mapping-indigo-devel/octomap_server
+-DCATKIN_DEVEL_PREFIX=/home/tx/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/tx/catkin_ws/install -G Unix Makefiles

@@ -1,0 +1,90 @@
+#include"pid_set.h"
+void PID_set(struct pid_x* p_x,struct pid_y* p_y,struct pid_yaw* p_yaw,struct pid_u* p_u,struct pid_v* p_v,struct pid_h* p_h,struct pid_vx* p_vx,struct pid_vy* p_vy,struct att* att);	//set paras
+{
+
+
+	FILE *para;
+    	para=fopen("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_demo/src/pidconfig.txt","r"); 
+
+	if(NULL==para)
+	{
+		printf("not find x_para!\n");
+	}
+
+	fscanf(para,"%f",&p_x->kp);		//x
+	fscanf(para,"%f",&p_x->ki);
+	fscanf(para,"%f",&p_x->kd);
+	
+	fscanf(para,"%f",&p_y->kp);		//y
+	fscanf(para,"%f",&p_y->ki);
+	fscanf(para,"%f",&p_y->kd);
+	
+	fscanf(para,"%f",&p_yaw->kp);		//yaw
+	fscanf(para,"%f",&p_yaw->ki);
+	fscanf(para,"%f",&p_yaw->kd);
+	
+	fscanf(para,"%f",&p_u->kp);		//u
+	fscanf(para,"%f",&p_u->ki);
+	fscanf(para,"%f",&p_u->kd);
+	
+	fscanf(para,"%f",&p_v->kp);		//v
+	fscanf(para,"%f",&p_v->ki);
+	fscanf(para,"%f",&p_v->kd);
+	
+	fscanf(para,"%f",&p_h->kp);		//h
+	fscanf(para,"%f",&p_h->ki);
+	fscanf(para,"%f",&p_h->kd);
+
+	fscanf(para,"%f",&p_vx->kp);		//vx
+	fscanf(para,"%f",&p_vx->ki);
+	fscanf(para,"%f",&p_vx->kd);
+
+	fscanf(para,"%f",&p_vy->kp);		//vy
+	fscanf(para,"%f",&p_vy->ki);
+	fscanf(para,"%f",&p_vy->kd);
+
+	fclose(para);
+	
+	p_x->error=0.0;
+	p_x->error_last=0.0;
+	p_x->integral=0.0;
+	p_x->v=0.0;
+	
+	p_y->error=0.0;
+	p_y->error_last=0.0;
+	p_y->integral=0.0;
+	p_y->v=0.0;
+	
+	p_yaw->error=0.0;
+	p_yaw->error_last=0.0;
+	p_yaw->integral=0.0;
+	p_yaw->v=0.0;
+	
+	p_u->error=0.0;
+	p_u->error_last=0.0;
+	p_u->integral=0.0;
+	p_u->v=0.0;
+	
+	p_v->error=0.0;
+	p_v->error_last=0.0;
+	p_v->integral=0.0;
+	p_v->v=0.0;
+
+	p_h->error=0.0;
+	p_h->error_last=0.0;
+	p_h->integral=0.0;
+	p_h->v=0.0;
+	
+	p_vx->error=0.0;
+	p_vx->error_last=0.0;
+	p_vx->integral=0.0;
+	p_vx->a=0.0;
+
+	p_vy->error=0.0;
+	p_vy->error_last=0.0;
+	p_vy->integral=0.0;
+	p_vy->a=0.0;
+
+	att->pitch=0.0;
+	att->roll=0.0;
+}

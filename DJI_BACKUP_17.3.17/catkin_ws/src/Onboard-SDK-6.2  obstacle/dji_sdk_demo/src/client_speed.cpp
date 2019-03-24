@@ -1,0 +1,488 @@
+#include <ros/ros.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dji_sdk/dji_drone.h>
+#include <time.h>
+#include <cstdlib>
+#include <actionlib/client/simple_action_client.h>
+#include <actionlib/client/terminal_state.h>
+#include <geometry_msgs/Twist.h>//position
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
+#include <std_msgs/Float32.h>
+#include <math.h>
+#include <opencv/cxcore.h>
+#include  <opencv/cvaux.h>
+#include <sensor_msgs/Range.h>
+#include"wqf_math.h" //for header file
+#include"pid_set.h"
+
+struct pid_x pid_x;
+struct pid_y pid_y; 
+struct pid_yaw pid_yaw;
+struct pid_u pid_u;
+struct pid_v pid_v;
+struct pid_h pid_h;
+FILE *fpwny=fopen("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_demo/data/control_cmd.txt","w");
+FILE *speed=fopen("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_demo/data/speed.txt","r");
+FILE *count=fopen("/home/ubuntu/catkin_ws/src/Onboard-SDK-ROS-3.1-apriltag/dji_sdk_demo/data/count.txt","r");
+using namespace DJI::onboardSDK;
+
+ros::Subscriber Ford150_position_sub;
+geometry_msgs::Twist  Ford_150;
+
+void Ford150_position_callback(const geometry_msgs::Twist::ConstPtr& Ford150_position)
+{
+     Ford_150.linear.x=Ford150_position->linear.x;
+     //printf("Ford_150.linear.x=%f\n",Ford_150.linear.x);
+     Ford_150.linear.y=Ford150_position->linear.y;
+     Ford_150.linear.z=Ford150_position->linear.z;
+     Ford_150.angular.x=Ford150_position->angular.x;
+	//printf("Ford_150.angular.x=%f\n",Ford_150.angular.x);
+     Ford_150.angular.y=Ford150_position->angular.y;
+
+}
+
+void PID_x_realize(float input1)	//PID algorithm
+{
+	pid_x.error=input1;
+	if(pid_x.v>0.0&&pid_x.error<0.0)
+	{
+		pid_x.integral+=pid_x.error;
+	}
+	else if(pid_x.v<0.0&&pid_x.error>0.0)
+	{
+		pid_x.integral+=pid_x.error;
+	}
+	else
+	{
+	}
+	pid_x.v=pid_x.kp*pid_x.error+pid_x.ki*pid_x.integral+pid_x.kd*(pid_x.error-pid_x.error_last);
+	pid_x.error_last=pid_x.error;
+}
+
+void PID_y_realize(float input2)	
+{
+	pid_y.error=input2;
+	if(pid_y.v>0.0&&pid_y.error<0.0)
+	{
+		pid_y.integral+=pid_y.error;
+	}
+	else if(pid_y.v<0.0&&pid_y.error>0.0)
+	{
+		pid_y.integral+=pid_y.error;
+	}
+	else
+	{
+	}
+	pid_y.v=pid_y.kp*pid_y.error+pid_y.ki*pid_y.integral+pid_y.kd*(pid_y.error-pid_y.error_last);
+	pid_y.error_last=pid_y.error;
+}
+
+void PID_yaw_realize(float input3)		//yaw_PID realize
+{
+	double a=(double)pid_x.error;
+	double b=(double)pid_y.error;
+	float c=(float)atan2(b,a);
+	float angle=c-input3;
+	
+	if(angle> 3.14)
+	{ 
+		pid_yaw.error=angle-6.28;
+	}
+	else if(angle< -3.14)
+	{
+		pid_yaw.error=angle+6.28;
+	}
+	else
+	{
+		pid_yaw.error=angle;
+	}
+
+	pid_yaw.integral+=pid_yaw.error;
+	pid_yaw.v=(pid_yaw.kp*pid_yaw.error+pid_yaw.ki*pid_yaw.integral+pid_yaw.kd*(pid_yaw.error- pid_yaw.error_last))*57.3;
+	pid_y.error_last=pid_y.error;
+}
+
+void PID_u_realize(float input4)	
+{
+	pid_u.error=320.0-input4;
+	pid_u.integral+=pid_u.error;
+	pid_u.v=pid_u.kp*pid_u.error+pid_u.ki*pid_u.integral+pid_u.kd*(pid_u.error-pid_u.error_last);
+	pid_u.error_last=pid_u.error;
+}
+
+void PID_v_realize(float input5)	
+{
+	pid_v.error=240.0-input5;
+	pid_v.integral+=pid_v.error;
+	pid_v.v=pid_v.kp*pid_v.error+pid_v.ki*pid_v.integral+pid_v.kd*(pid_v.error-pid_v.error_last);
+	pid_v.error_last=pid_v.error;
+}
+
+void PID_h_realize(float input6)	
+{
+	pid_h.error=input6;
+	if(pid_h.v>0.0&&pid_h.error<0.0)
+	{
+		pid_h.integral+=pid_h.error;
+	}
+	else if(pid_h.v<0.0&&pid_h.error>0.0)
+	{
+		pid_h.integral+=pid_h.error;
+	}
+	pid_h.v=pid_h.kp*pid_h.error+pid_h.ki*pid_h.integral+pid_h.kd*(pid_h.error-pid_h.error_last);
+	pid_h.error_last=pid_h.error;
+}
+
+int main(int argc, char **argv)
+{
+   
+    ros::init(argc, argv, "flight_control");
+    ros::NodeHandle nh;
+    	char c;
+	ros::Publisher pub = nh.advertise<sensor_msgs::Range>("iarc007/errorx",2);
+        
+        sensor_msgs::Range errorx_pub;
+        float yaw_uav;								//define Euler Angels
+         float pitch_uav;
+          float roll_uav;
+    DJIDrone* drone = new DJIDrone(nh);
+    //ros::NodeHandle my_node2;
+   // Ford150_position_sub = my_node2.subscribe("/Ford150/info", 1,Ford150_position_callback);
+    Ford150_position_sub = nh.subscribe("/Ford150/info", 100,Ford150_position_callback);
+   //printf("Ford_150.linear.x000=%f\n",Ford_150.linear.x); 
+       for(int i=0;i<10;i++)
+		{
+			drone->activate();
+			usleep(10000);
+			printf("adrone->activation==%d\n",drone->activation);
+			if(!drone->activation)		
+			{
+			    ROS_INFO("active success ok !!");
+				break;
+				
+			} 
+		}
+		/* request control ability*/
+	
+
+		for(int i=0;i<10;i++)
+		{
+			drone->request_sdk_permission_control();
+			usleep(10000);
+			 printf("obtain control success==%d\n",drone->sdk_permission_opened);
+			if(drone->sdk_permission_opened)		
+			{
+			    printf("obtain control success");
+				break;
+				
+			} 
+		}
+		
+                
+
+		/* take off */
+		drone->takeoff();
+  
+
+        	sleep(8);
+
+           	/*PID control*/
+            
+		PID_set(&pid_x,&pid_y,&pid_yaw,&pid_u,&pid_v,&pid_h);				//set parament
+		
+		/*printf("pid_x.kp======%f\n",pid_x.kp);
+		printf("pid_x.ki======%f\n",pid_x.ki);
+		printf("pid_x.kd======%f\n",pid_x.kd);
+	
+		printf("pid_y.kp======%f\n",pid_y.kp);
+		printf("pid_y.ki======%f\n",pid_y.ki);
+		printf("pid_y.kd======%f\n",pid_y.kd);
+	
+		printf("pid_yaw.kp======%f\n",pid_yaw.kp);
+		printf("pid_yaw.ki======%f\n",pid_yaw.ki);
+		printf("pid_yaw.kd======%f\n",pid_yaw.kd);
+		
+
+		printf("pid_u.kp======%f\n",pid_u.kp);
+		printf("pid_u.ki======%f\n",pid_u.ki);
+		printf("pid_u.kd======%f\n",pid_u.kd);
+	
+		printf("pid_v.kp======%f\n",pid_v.kp);
+		printf("pid_v.ki======%f\n",pid_v.ki);
+		printf("pid_v.kd======%f\n",pid_v.kd);
+		
+		printf("pid_x.error===============%f\n",pid_x.error);*/
+
+		/*printf("pid_h.kp======%f\n",pid_h.kp);
+		printf("pid_h.ki======%f\n",pid_h.ki);
+		printf("pid_h.kd======%f\n",pid_h.kd);*/
+		
+
+
+		/*float destination_vx=0.7;			//use for simulation
+		float destination_vy=0.5;	
+		float m=0.0;
+		float n=0.0;
+		float x_input=3.0;  							 
+		float y_input=2.0;*/
+		
+		float x_input=0.0;  				 //use for real			 
+		float y_input=0.0;
+		float h_input=0.0;
+		float yaw_input=0.0;
+		float u_input=-1;
+		float v_input=-1;
+		float height=0.0;
+
+		float x_limit=1.0;
+		float y_limit=1.0;
+		float yaw_limit=57.3;
+		float h_limit=0.3;
+		float xy_limit=0.5;
+				
+		float x_land=0.15;
+		float y_land=0.15;
+		float z_land=0.5;
+
+		/*set speed*/	
+	
+
+		float y_speed=0.0;
+		fscanf(speed,"%f",&y_speed);
+		fclose(speed);
+
+		int y_count=0;
+		fscanf(count,"%d",&y_count);
+		fclose(count);
+
+		/*test for flight time*/		
+		int count=1;
+		ros::Rate r(10);				//the frequency = 50Hz
+		//ros::spin();
+		while(ros::ok())
+		{
+                    
+                      
+			if(drone->rc_channels.gear>-5000)
+			{
+				drone->request_sdk_permission_control();
+				usleep(1000);
+				//printf("wait for control permission.\n");
+			}
+			else
+			{
+			}	
+
+			if(count%y_count==0)
+			{
+				y_speed=-y_speed;
+			}
+			else
+			{
+			}
+	
+			//Quaternion_To_Euler(drone->attitude_quaternion.q0,drone->attitude_quaternion.q1,drone->attitude_quaternion.q2,drone->attitude_quaternion.q3,&yaw_uav,&pitch_uav,&roll_uav);
+			//printf("yaw======%f\n",yaw_uav);
+		
+
+	
+				//for real
+
+				/*x_input=Ford_150.linear.x*0.01;				
+				y_input=Ford_150.linear.y*0.01;
+				h_input=0.0-Ford_150.linear.z*0.01;
+				
+				
+				yaw_input=yaw_uav;						
+				u_input=Ford_150.angular.x;
+				v_input=Ford_150.angular.y;*/
+
+				
+				//for real
+
+
+
+				//use for simulation
+							
+				/*m=m+destination_vx*0.02;						
+				n=n+destination_vy*0.02;*/
+				
+				//x_input=40.0-drone->local_position.x;   			
+				//y_input=30.0-drone->local_position.y; 
+				//h_input=height-drone->local_position.z;	
+				//printf("height=======%f\n",height);
+				/*printf("x_input=============%f\n",x_input);
+				printf("y_input=============%f\n",y_input);*/				
+	              
+				//ROS_INFO("U_INPUT==%f",u_input);
+				/*printf("error_x=%f\n",x_input);		
+				printf("error_y=%f\n",y_input);	*/	
+
+				//use for simulation
+			
+				/*PID_x_realize(x_input);
+				PID_y_realize(y_input);
+				PID_yaw_realize(yaw_input);
+				PID_u_realize(u_input);
+				PID_v_realize(v_input);
+				PID_h_realize(h_input);*/
+				
+				/*if(pid_x.v>x_limit)				// limitation of v_x (max = 1.5 m/s)
+				{
+					pid_x.v=x_limit;
+				}
+				else if(pid_x.v<-x_limit)
+				{
+					pid_x.v=-x_limit;
+				}
+				else
+				{
+				}	
+		
+				if(pid_y.v>y_limit)				// limitation of v_y (max = 1.5 m/s)
+				{
+					pid_y.v=y_limit;
+				}
+				else if(pid_y.v<-y_limit)
+				{
+					pid_y.v=-y_limit;
+				}
+				else
+				{
+				}
+				
+				if(pid_yaw.v>yaw_limit)			// limitation of v_y (max = 1.0 m/s)
+				{
+					pid_yaw.v=yaw_limit;
+				}
+				else if(pid_yaw.v<-yaw_limit)
+				{
+					pid_yaw.v=-yaw_limit;
+				}
+				else
+				{
+				}
+
+				if(pid_h.v>h_limit)				// limitation of v_y (max = 0.7 m/s)
+				{
+					pid_h.v=h_limit;
+				}
+				else if(pid_h.v<-h_limit)
+				{
+					pid_h.v=-h_limit;
+				}
+				else
+				{
+				}*/
+				
+				/*if(pid_u.v>270.0)				// limitation of v_x (max = 270.0 degree/s)
+				{
+					pid_u.v=270.0;
+				}
+				else if(pid_u.v<-270.0)
+				{
+					pid_u.v=-270.0;
+				}
+				else
+				{
+				}	
+		
+				if(pid_v.v>270.0)				// limitation of v_y (max = 270.0 degree/s)
+				{
+					pid_v.v=270.0;
+				}
+				else if(pid_v.v<-270.0)
+				{
+					pid_v.v=-270.0;
+				}
+				else
+				{
+				}*/
+
+			
+				/*if(abs(pid_x.error)<xy_limit||abs(pid_y.error)<xy_limit)
+				{
+					pid_yaw.v=0.0;
+				}
+				else
+				{
+				}*/			
+
+
+				/*if((pid_x.error*pid_x.error+pid_y.error*pid_y.error)<11.0&&abs(pid_x.error)>0.2&&abs(pid_y.error)>0.2)		//limitation of pitch
+				{
+					h_input=(3.33-3.33*sqrt(1-0.09*(pid_x.error*pid_x.error+pid_y.error*pid_y.error)))-Ford_150.linear.z*0.01;	
+				}
+				else if(abs(pid_x.error)<0.2&&abs(pid_y.error)<0.2)		//landing in this area
+				{
+					h_input=0.0-Ford_150.linear.z*0.01;
+				}
+				else						//need another limitation for x2+y2>11.11						
+				{
+					//h_input=4.0-Ford_150.linear.z*0.01;
+				}*/
+
+
+        
+			//printf("error_x=%f\n",pid_x.error);		//print e_x,e_y,e_yaw,e_u,e_v,e_h
+			//printf("error_y=%f\n",pid_y.error);
+			//printf("position_h=%f\n",drone->local_position.z);
+			//printf("error_h=%f\n",pid_h.error);
+
+			//printf("error_yaw=%f\n",pid_yaw.error);
+			//printf("error_u=%f\n",pid_u.error);		
+			//printf("error_v=%f\n",pid_v.error);
+
+			//printf("velocity_x=%f\n",pid_x.v);		//print v_x,v_y,v_yaw,v_u,v_v,e_h
+			//printf("velocity_y=%f\n",pid_y.v);
+			//printf("velocity_h=%f\n",pid_h.v);
+			//printf("integral_h=%f\n",pid_h.integral);
+
+			//printf("velocity_yaw=%f\n",pid_yaw.v);
+			//printf("velocity_u=%f\n",pid_u.v);		
+			//printf("velocity_v=%f\n",pid_v.v);
+
+			/*errorx_pub.header.stamp = ros::Time::now();
+                        errorx_pub.range = pid_x.error;
+                        errorx_pub.field_of_view = pid_x.v;		
+			pub.publish(errorx_pub);*/
+
+
+
+			/*if(Ford_150.linear.z*0.01<z_land&&abs(pid_x.error)<x_land&&abs(pid_y.error)<y_land)             //landing through control_cmd
+			{
+				pid_h.v=-0.3;
+			}
+			else
+			{
+			}*/
+
+			/*if(Ford_150.linear.z*0.01<0.2)		//landing through landing_cmd
+			{
+				drone->landing();
+			}
+			else
+			{
+			}*/
+
+
+			drone->attitude_control( Flight::HorizontalLogic::HORIZONTAL_VELOCITY |		
+                            Flight::VerticalLogic::VERTICAL_VELOCITY |
+                            Flight::YawLogic::YAW_PALSTANCE |
+                            Flight::HorizontalCoordinate::HORIZONTAL_GROUND |
+                            Flight::SmoothMode::SMOOTH_ENABLE,
+                            0.0,y_speed, 0.0, 0.0);
+                           
+			drone->gimbal_speed_control(0.0,0.0,0.0);    
+		        //fprintf(fpwny," pid_x.v=%f\t  pid_y.v=%f\t  pid_h.v=%f\t  pid_yaw.v=%f\t \n",pid_x.v,pid_y.v,pid_h.v,pid_yaw.v);
+			
+			count++;
+
+   			ros::spinOnce();
+			r.sleep();
+		}
+      
+	return 0;
+}
